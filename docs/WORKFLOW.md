@@ -39,11 +39,14 @@ Pass criteria:
 - delete volume/snapshot
 5. Build and run runtime agent:
 - `go build -o bin/runtime-agent ./cmd/runtime-agent`
-- `THIN_POOL=microvm-vg/sandbox-thinpool DEFAULT_BRIDGE_IF=fcbr0 DEFAULT_NET_CIDR=172.26.0.0/24 RUNTIME_ADDR=:8081 ./bin/runtime-agent`
+- `THIN_POOL=microvm-vg/sandbox-thinpool BASE_IMAGE_LV=/dev/microvm-vg/img-base DEFAULT_BRIDGE_IF=fcbr0 DEFAULT_NET_CIDR=172.26.0.0/24 RUNTIME_ADDR=:8081 ./bin/runtime-agent`
 6. Validate command wiring with smoke test:
 - `RUNTIME_URL=http://127.0.0.1:8081 bash scripts/runtime_agent_smoketest.sh`
 7. Set up host networking for guest access:
 - `bash scripts/setup_networking.sh`
+8. Install services for reboot persistence:
+- `bash scripts/install_networking_service.sh`
+- `bash scripts/install_runtime_agent_service.sh`
 
 ## Phase 3: Base Image Creation
 1. Build one Ubuntu-based rootfs image.

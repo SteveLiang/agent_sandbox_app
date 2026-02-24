@@ -47,8 +47,9 @@ func main() {
 	addr := envOrDefault("RUNTIME_ADDR", ":8081")
 	thinPool := envOrDefault("THIN_POOL", "microvm-vg/sandbox-thinpool")
 	vmRoot := envOrDefault("MICROVM_ROOT", "/var/lib/microvm")
+	baseImageLV := envOrDefault("BASE_IMAGE_LV", "/dev/microvm-vg/img-base")
 
-	s := &server{adapter: runtime.Adapter{ThinPool: thinPool, VMRoot: vmRoot}}
+	s := &server{adapter: runtime.Adapter{ThinPool: thinPool, VMRoot: vmRoot, BaseImageLV: baseImageLV}}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
@@ -67,7 +68,7 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	log.Printf("runtime-agent listening on %s (thin_pool=%s)", addr, thinPool)
+	log.Printf("runtime-agent listening on %s (thin_pool=%s base_image_lv=%s)", addr, thinPool, baseImageLV)
 	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("server error: %v", err)
 	}

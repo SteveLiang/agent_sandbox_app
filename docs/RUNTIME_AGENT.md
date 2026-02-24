@@ -17,7 +17,7 @@ go build -o bin/runtime-agent ./cmd/runtime-agent
 ## Run (on droplet as root)
 
 ```bash
-THIN_POOL=microvm-vg/sandbox-thinpool RUNTIME_ADDR=:8081 ./bin/runtime-agent
+THIN_POOL=microvm-vg/sandbox-thinpool BASE_IMAGE_LV=/dev/microvm-vg/img-base RUNTIME_ADDR=:8081 ./bin/runtime-agent
 ```
 
 ## API
@@ -59,6 +59,18 @@ Options:
 - If `net_cidr` is set, runtime-agent allocates and persists a unique guest IP in sandbox network metadata.
 - Runtime-agent sets static guest networking via kernel `ip=` boot args using allocated guest IP/gateway.
 - Runtime-agent allocates and persists per-sandbox `ssh_port`, then adds localhost DNAT rule to guest `:22`.
+- Runtime-agent adds SNAT for localhost forwarded SSH so responses return correctly.
+
+## Persist Across Reboots
+
+```bash
+bash scripts/install_networking_service.sh
+bash scripts/install_runtime_agent_service.sh
+```
+
+This installs and enables:
+- `microvm-networking.service`
+- `runtime-agent.service`
 
 ## In-Guest Validation (SSH)
 

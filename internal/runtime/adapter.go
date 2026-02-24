@@ -24,8 +24,9 @@ import (
 var safeID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{2,63}$`)
 
 type Adapter struct {
-	ThinPool string
-	VMRoot   string
+	ThinPool    string
+	VMRoot      string
+	BaseImageLV string
 }
 
 type CommandResult struct {
@@ -88,8 +89,23 @@ func (a Adapter) CreateSandboxVolume(ctx context.Context, sandboxID string, size
 		return CommandResult{}, err
 	}
 	name := "sbx-" + sandboxID
-	cmd := []string{"lvcreate", "-V", fmt.Sprintf("%dG", sizeGB), "-T", a.ThinPool, "-n", name}
-	return runCommand(ctx, cmd)
+	var cmd []string
+	if a.BaseImageLV != "" {
+		cmd = []string{"lvcreate", "-s", "-n", name, a.BaseImageLV}
+	} else {
+		cmd = []string{"lvcreate", "-V", fmt.Sprintf("%dG", sizeGB), "-T", a.ThinPool, "-n", name}
+	}
+	res, err := runCommand(ctx, cmd)
+	if err != nil {
+		if strings.Contains(res.Output, "already exists") {
+			return CommandResult{
+				Command: strings.Join(cmd, " "),
+				Output:  "sandbox volume already exists; reusing existing logical volume",
+			}, nil
+		}
+		return res, err
+	}
+	return res, nil
 }
 
 func (a Adapter) SnapshotSandboxVolume(ctx context.Context, sandboxID, snapshotID string) (CommandResult, error) {
@@ -719,6 +735,20 @@ func (a Adapter) ensureSSHPortForward(ctx context.Context, cfg NetworkConfig) er
 			return addErr
 		}
 	}
+	// Ensure return traffic can route back when client connects via 127.0.0.1:<ssh_port>.
+	if _, err := runCommand(ctx, []string{
+		"iptables", "-t", "nat", "-C", "POSTROUTING",
+		"-p", "tcp", "-s", "127.0.0.1", "-d", cfg.GuestIP, "--dport", "22",
+		"-j", "SNAT", "--to-source", cfg.Gateway,
+	}); err != nil {
+		if _, addErr := runCommand(ctx, []string{
+			"iptables", "-t", "nat", "-A", "POSTROUTING",
+			"-p", "tcp", "-s", "127.0.0.1", "-d", cfg.GuestIP, "--dport", "22",
+			"-j", "SNAT", "--to-source", cfg.Gateway,
+		}); addErr != nil {
+			return addErr
+		}
+	}
 	return nil
 }
 
@@ -733,9 +763,12 @@ func (a Adapter) deleteSSHPortForward(ctx context.Context, cfg NetworkConfig) er
 		"-p", "tcp", "-d", "127.0.0.1", "--dport", port,
 		"-j", "DNAT", "--to-destination", toDest,
 	})
-	if err != nil {
-		return nil
-	}
+	_ = err
+	_, _ = runCommand(ctx, []string{
+		"iptables", "-t", "nat", "-D", "POSTROUTING",
+		"-p", "tcp", "-s", "127.0.0.1", "-d", cfg.GuestIP, "--dport", "22",
+		"-j", "SNAT", "--to-source", cfg.Gateway,
+	})
 	return nil
 }
 
