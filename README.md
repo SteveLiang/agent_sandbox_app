@@ -16,6 +16,7 @@ This project targets:
 ## Repository Layout
 - `docs/ARCHITECTURE.md`: system design and MVP boundaries
 - `docs/WORKFLOW.md`: step-by-step build and validation workflow
+- `docs/FROM_SCRATCH.md`: full rebuild guide for new VM/provider
 - `docs/RUNTIME_AGENT.md`: runtime adapter API and usage
 - `scripts/validate_kvm.sh`: host capability checks
 - `scripts/bootstrap_host.sh`: runtime host dependency bootstrap
@@ -36,3 +37,47 @@ This project targets:
 4. In another shell, run:
    - `RUNTIME_URL=http://127.0.0.1:8081 bash scripts/runtime_agent_smoketest.sh`
 5. Follow remaining workflow phases for base image + control plane API.
+
+## Rebuild Tomorrow
+If you destroy your droplet and recreate later, follow:
+- [docs/FROM_SCRATCH.md](/Users/dreaminvm/agent_sandbox_app/docs/FROM_SCRATCH.md)
+
+This includes:
+- fresh host bootstrap
+- storage/runtime setup
+- base image rebuild
+- persistent services
+- full E2E verification
+
+## Roadmap To Sprites-Like Experience
+Current state is runtime-first (API + microVM backend). To reach a user-facing account-to-terminal experience:
+
+1. Identity and account model
+- User registration/login
+- API keys and workspace-level access control
+- Multi-tenant authorization on every sandbox/snapshot operation
+
+2. Control plane service
+- Persistent metadata DB for users, workspaces, sandboxes, snapshots
+- Job queue and state machine (create/start/snapshot/restore/stop)
+- Audit logs and quota enforcement
+
+3. Workspace UX
+- Web app with “Create sandbox” and “Open terminal” actions
+- Realtime terminal (websocket) and file browser
+- Snapshot timeline with one-click restore
+
+4. Agent-ready defaults
+- One-click templates with codex-ready environment
+- Secret injection at runtime (no secrets baked into snapshots)
+- Per-workspace startup scripts
+
+5. Reliability and scale
+- Host pool scheduler and health checks
+- Image caching and warm capacity for faster startup
+- Metrics/SLO dashboards (create/snapshot/restore latency)
+
+6. Billing and lifecycle
+- Usage metering (runtime minutes, storage, snapshot count)
+- TTL/auto-shutdown policies
+- Payment and plan limits per workspace

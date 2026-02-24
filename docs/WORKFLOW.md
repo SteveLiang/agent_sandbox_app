@@ -4,7 +4,7 @@ This runbook captures the end-to-end workflow for bringing up the MVP.
 
 ## Phase 1: Host Readiness (DigitalOcean)
 1. SSH to host:
-- `ssh root@146.190.51.22`
+- `ssh root@<your-host-ip>`
 
 2. Install Go:
 - `apt-get update && apt-get install -y golang-go`
