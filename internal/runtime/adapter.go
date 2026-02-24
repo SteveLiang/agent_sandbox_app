@@ -237,7 +237,7 @@ func (a Adapter) StartSandboxVM(ctx context.Context, sandboxID string, opts Star
 		return VMResult{}, err
 	}
 	bootArgs := fmt.Sprintf(
-		"console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw ip=%s::%s:%s:%s:eth0:off",
+		"console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw net.ifnames=0 biosdevname=0 ip=%s::%s:%s:%s::off",
 		networkCfg.GuestIP,
 		networkCfg.Gateway,
 		mask,
