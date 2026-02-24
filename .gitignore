@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# Env and local config
+.env
+.env.*
+
+# Logs and runtime
+*.log
+.tmp/
+
+# Build artifacts
+bin/
+dist/
