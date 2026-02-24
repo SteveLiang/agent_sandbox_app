@@ -113,7 +113,18 @@ func (a Adapter) RestoreSnapshotToSandbox(ctx context.Context, snapshotID, sandb
 	}
 	origin := volumePath(a.ThinPool, "snap-"+snapshotID)
 	cmd := []string{"lvcreate", "-s", "-n", "sbx-" + sandboxID, origin}
-	return runCommand(ctx, cmd)
+	res, err := runCommand(ctx, cmd)
+	if err != nil {
+		// Make restore idempotent in retry scenarios.
+		if strings.Contains(res.Output, "already exists") {
+			return CommandResult{
+				Command: strings.Join(cmd, " "),
+				Output:  "sandbox volume already exists; reusing existing logical volume",
+			}, nil
+		}
+		return res, err
+	}
+	return res, nil
 }
 
 func (a Adapter) DeleteSandboxVolume(ctx context.Context, sandboxID string) (CommandResult, error) {
@@ -170,7 +181,8 @@ func (a Adapter) StartSandboxVM(ctx context.Context, sandboxID string, opts Star
 		return VMResult{}, err
 	}
 	if _, err := runCommand(ctx, []string{"vgscan", "--mknodes"}); err != nil {
-		return VMResult{}, err
+		// vgscan can return non-zero on some hosts even when nodes are already present.
+		// Proceed and rely on settle + fallback path resolution.
 	}
 	if _, err := runCommand(ctx, []string{"udevadm", "settle"}); err != nil {
 		return VMResult{}, err
