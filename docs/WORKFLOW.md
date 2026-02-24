@@ -25,6 +25,11 @@ Pass criteria:
 - create snapshot
 - clone snapshot
 - delete volume/snapshot
+4. Build and run runtime agent:
+- `go build -o bin/runtime-agent ./cmd/runtime-agent`
+- `THIN_POOL=microvm-vg/sandbox-thinpool RUNTIME_ADDR=:8081 ./bin/runtime-agent`
+5. Validate command wiring with smoke test:
+- `RUNTIME_URL=http://127.0.0.1:8081 bash scripts/runtime_agent_smoketest.sh`
 
 ## Phase 3: Base Image Creation
 1. Build one Ubuntu-based rootfs image.
