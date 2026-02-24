@@ -24,6 +24,8 @@ THIN_POOL=microvm-vg/sandbox-thinpool RUNTIME_ADDR=:8081 ./bin/runtime-agent
 - `GET /healthz`
 - `POST /v1/sandboxes` body: `{"sandbox_id":"...","size_gb":5}`
 - `DELETE /v1/sandboxes?sandbox_id=...`
+- `POST /v1/sandboxes/start` body: `{"sandbox_id":"...","kernel_image":"/var/lib/microvm/images/vmlinux.bin","vcpu_count":2,"mem_mib":1024}`
+- `POST /v1/sandboxes/stop` body: `{"sandbox_id":"..."}`
 - `POST /v1/snapshots` body: `{"sandbox_id":"...","snapshot_id":"..."}`
 - `DELETE /v1/snapshots?snapshot_id=...`
 - `POST /v1/restores` body: `{"snapshot_id":"...","sandbox_id":"..."}`
@@ -37,4 +39,5 @@ RUNTIME_URL=http://127.0.0.1:8081 bash scripts/runtime_agent_smoketest.sh
 ## Notes
 - IDs are validated against `[a-zA-Z0-9][a-zA-Z0-9_-]{2,63}`.
 - This currently manages LVM thin volumes/snapshots.
-- Firecracker lifecycle wiring is the next step after verifying storage path latency and reliability.
+- VM start clears LVM `activationskip` and force-activates the LV before drive attach.
+- Firecracker process state lives under `/var/lib/microvm/sandboxes/<sandbox_id>/`.

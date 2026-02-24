@@ -28,6 +28,13 @@ type restoreReq struct {
 	SandboxID  string `json:"sandbox_id"`
 }
 
+type startReq struct {
+	SandboxID   string `json:"sandbox_id"`
+	KernelImage string `json:"kernel_image"`
+	VCPUCount   int    `json:"vcpu_count"`
+	MemMiB      int    `json:"mem_mib"`
+}
+
 func main() {
 	addr := envOrDefault("RUNTIME_ADDR", ":8081")
 	thinPool := envOrDefault("THIN_POOL", "microvm-vg/sandbox-thinpool")
@@ -39,6 +46,8 @@ func main() {
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("POST /v1/sandboxes", s.handleCreateSandbox)
 	mux.HandleFunc("DELETE /v1/sandboxes", s.handleDeleteSandbox)
+	mux.HandleFunc("POST /v1/sandboxes/start", s.handleStartSandbox)
+	mux.HandleFunc("POST /v1/sandboxes/stop", s.handleStopSandbox)
 	mux.HandleFunc("POST /v1/snapshots", s.handleSnapshot)
 	mux.HandleFunc("DELETE /v1/snapshots", s.handleDeleteSnapshot)
 	mux.HandleFunc("POST /v1/restores", s.handleRestore)
@@ -112,6 +121,50 @@ func (s *server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "result": res})
+}
+
+func (s *server) handleStartSandbox(w http.ResponseWriter, r *http.Request) {
+	var req startReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	if req.KernelImage == "" {
+		req.KernelImage = envOrDefault("KERNEL_IMAGE", "/var/lib/microvm/images/vmlinux.bin")
+	}
+	if req.VCPUCount == 0 {
+		req.VCPUCount = envIntOrDefault("DEFAULT_VCPU", 2)
+	}
+	if req.MemMiB == 0 {
+		req.MemMiB = envIntOrDefault("DEFAULT_MEM_MIB", 1024)
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	res, err := s.adapter.StartSandboxVM(ctx, req.SandboxID, req.KernelImage, req.VCPUCount, req.MemMiB)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "result": res})
+}
+
+func (s *server) handleStopSandbox(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SandboxID string `json:"sandbox_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	res, err := s.adapter.StopSandboxVM(ctx, req.SandboxID)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "result": res})
 }
 
 func (s *server) handleDeleteSnapshot(w http.ResponseWriter, r *http.Request) {
