@@ -24,6 +24,7 @@ THIN_POOL=microvm-vg/sandbox-thinpool RUNTIME_ADDR=:8081 ./bin/runtime-agent
 - `GET /healthz`
 - `POST /v1/sandboxes` body: `{"sandbox_id":"...","size_gb":5}`
 - `DELETE /v1/sandboxes?sandbox_id=...`
+- `GET /v1/sandboxes/status?sandbox_id=...`
 - `POST /v1/sandboxes/start` body: `{"sandbox_id":"...","kernel_image":"/var/lib/microvm/images/vmlinux.bin","vcpu_count":2,"mem_mib":1024}`
 - `POST /v1/sandboxes/stop` body: `{"sandbox_id":"..."}`
 - `POST /v1/snapshots` body: `{"sandbox_id":"...","snapshot_id":"..."}`
@@ -35,6 +36,18 @@ THIN_POOL=microvm-vg/sandbox-thinpool RUNTIME_ADDR=:8081 ./bin/runtime-agent
 ```bash
 RUNTIME_URL=http://127.0.0.1:8081 bash scripts/runtime_agent_smoketest.sh
 ```
+
+## Networking (host prep)
+
+```bash
+bash scripts/setup_networking.sh
+```
+
+Options:
+- `BRIDGE_IF` default: `fcbr0`
+- `BRIDGE_CIDR` default: `172.26.0.1/24`
+- `TAP_IF` default: `fctap0`
+- `WAN_IF` auto-detected from default route
 
 ## Notes
 - IDs are validated against `[a-zA-Z0-9][a-zA-Z0-9_-]{2,63}`.

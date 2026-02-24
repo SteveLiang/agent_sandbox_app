@@ -42,6 +42,8 @@ Pass criteria:
 - `THIN_POOL=microvm-vg/sandbox-thinpool RUNTIME_ADDR=:8081 ./bin/runtime-agent`
 6. Validate command wiring with smoke test:
 - `RUNTIME_URL=http://127.0.0.1:8081 bash scripts/runtime_agent_smoketest.sh`
+7. Set up host networking for guest access:
+- `bash scripts/setup_networking.sh`
 
 ## Phase 3: Base Image Creation
 1. Build one Ubuntu-based rootfs image.

@@ -39,6 +39,19 @@ type VMResult struct {
 	StateDir   string `json:"state_dir"`
 }
 
+type VMStatus struct {
+	SandboxID      string `json:"sandbox_id"`
+	StateDir       string `json:"state_dir"`
+	PIDPath        string `json:"pid_path"`
+	SocketPath     string `json:"socket_path"`
+	LogPath        string `json:"log_path"`
+	RootFSPath     string `json:"rootfs_path"`
+	PID            int    `json:"pid"`
+	PIDFileExists  bool   `json:"pid_file_exists"`
+	SocketExists   bool   `json:"socket_exists"`
+	ProcessRunning bool   `json:"process_running"`
+}
+
 func (a Adapter) CreateSandboxVolume(ctx context.Context, sandboxID string, sizeGB int) (CommandResult, error) {
 	if sizeGB <= 0 {
 		return CommandResult{}, errors.New("size_gb must be > 0")
@@ -243,6 +256,44 @@ func (a Adapter) StopSandboxVM(_ context.Context, sandboxID string) (CommandResu
 	}, nil
 }
 
+func (a Adapter) SandboxStatus(_ context.Context, sandboxID string) (VMStatus, error) {
+	if err := validateID(sandboxID); err != nil {
+		return VMStatus{}, err
+	}
+	stateDir := filepath.Join(a.VMRoot, "sandboxes", sandboxID)
+	pidPath := filepath.Join(stateDir, "firecracker.pid")
+	socketPath := filepath.Join(stateDir, "firecracker.sock")
+	logPath := filepath.Join(stateDir, "firecracker.log")
+	rootFS := volumePath(a.ThinPool, "sbx-"+sandboxID)
+
+	status := VMStatus{
+		SandboxID:  sandboxID,
+		StateDir:   stateDir,
+		PIDPath:    pidPath,
+		SocketPath: socketPath,
+		LogPath:    logPath,
+		RootFSPath: rootFS,
+	}
+
+	if _, err := os.Stat(pidPath); err == nil {
+		status.PIDFileExists = true
+		raw, readErr := os.ReadFile(pidPath)
+		if readErr == nil {
+			if pid, convErr := strconv.Atoi(strings.TrimSpace(string(raw))); convErr == nil {
+				status.PID = pid
+				if processRunning(pid) {
+					status.ProcessRunning = true
+				}
+			}
+		}
+	}
+	if _, err := os.Stat(socketPath); err == nil {
+		status.SocketExists = true
+	}
+
+	return status, nil
+}
+
 func (a Adapter) CheckDependencies(ctx context.Context) (map[string]bool, error) {
 	deps := []string{"lvcreate", "lvremove", "lvs", "firecracker"}
 	out := make(map[string]bool, len(deps))
@@ -334,4 +385,12 @@ func waitForSocket(ctx context.Context, socketPath string) error {
 			}
 		}
 	}
+}
+
+func processRunning(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil
 }

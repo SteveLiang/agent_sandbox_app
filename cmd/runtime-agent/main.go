@@ -46,6 +46,7 @@ func main() {
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("POST /v1/sandboxes", s.handleCreateSandbox)
 	mux.HandleFunc("DELETE /v1/sandboxes", s.handleDeleteSandbox)
+	mux.HandleFunc("GET /v1/sandboxes/status", s.handleSandboxStatus)
 	mux.HandleFunc("POST /v1/sandboxes/start", s.handleStartSandbox)
 	mux.HandleFunc("POST /v1/sandboxes/stop", s.handleStopSandbox)
 	mux.HandleFunc("POST /v1/snapshots", s.handleSnapshot)
@@ -147,6 +148,22 @@ func (s *server) handleStartSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "result": res})
+}
+
+func (s *server) handleSandboxStatus(w http.ResponseWriter, r *http.Request) {
+	sandboxID := r.URL.Query().Get("sandbox_id")
+	if sandboxID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sandbox_id is required"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	status, err := s.adapter.SandboxStatus(ctx, sandboxID)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "result": status})
 }
 
 func (s *server) handleStopSandbox(w http.ResponseWriter, r *http.Request) {
