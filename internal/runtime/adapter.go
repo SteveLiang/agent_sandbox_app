@@ -160,16 +160,23 @@ func (a Adapter) StartSandboxVM(ctx context.Context, sandboxID string, opts Star
 		opts.SSHPortMax = 2999
 	}
 
-	rootFS := volumePath(a.ThinPool, "sbx-"+sandboxID)
-	if _, err := os.Stat(rootFS); err != nil {
-		return VMResult{}, fmt.Errorf("rootfs path missing: %s (%w)", rootFS, err)
-	}
+	rootLV := logicalVolumeName(a.ThinPool, "sbx-"+sandboxID)
 
 	// Thin snapshots can be marked activation-skip; clear it and force activation.
-	if _, err := runCommand(ctx, []string{"lvchange", "--setactivationskip", "n", rootFS}); err != nil {
+	if _, err := runCommand(ctx, []string{"lvchange", "--setactivationskip", "n", rootLV}); err != nil {
 		return VMResult{}, err
 	}
-	if _, err := runCommand(ctx, []string{"lvchange", "-ay", rootFS}); err != nil {
+	if _, err := runCommand(ctx, []string{"lvchange", "-ay", rootLV}); err != nil {
+		return VMResult{}, err
+	}
+	if _, err := runCommand(ctx, []string{"vgscan", "--mknodes"}); err != nil {
+		return VMResult{}, err
+	}
+	if _, err := runCommand(ctx, []string{"udevadm", "settle"}); err != nil {
+		return VMResult{}, err
+	}
+	rootFS, err := resolveRootFSPath(a.ThinPool, "sbx-"+sandboxID)
+	if err != nil {
 		return VMResult{}, err
 	}
 
@@ -404,6 +411,30 @@ func volumePath(thinPool, lvName string) string {
 		return "/dev/" + lvName
 	}
 	return fmt.Sprintf("/dev/%s/%s", parts[0], lvName)
+}
+
+func logicalVolumeName(thinPool, lvName string) string {
+	parts := strings.SplitN(thinPool, "/", 2)
+	if len(parts) != 2 {
+		return lvName
+	}
+	return fmt.Sprintf("%s/%s", parts[0], lvName)
+}
+
+func resolveRootFSPath(thinPool, lvName string) (string, error) {
+	primary := volumePath(thinPool, lvName)
+	if _, err := os.Stat(primary); err == nil {
+		return primary, nil
+	}
+	parts := strings.SplitN(thinPool, "/", 2)
+	if len(parts) != 2 {
+		return "", fmt.Errorf("rootfs path missing: %s", primary)
+	}
+	mapper := "/dev/mapper/" + strings.ReplaceAll(parts[0], "-", "--") + "-" + strings.ReplaceAll(lvName, "-", "--")
+	if _, err := os.Stat(mapper); err == nil {
+		return mapper, nil
+	}
+	return "", fmt.Errorf("rootfs path missing: %s (and mapper fallback %s)", primary, mapper)
 }
 
 func runCommand(ctx context.Context, args []string) (CommandResult, error) {
