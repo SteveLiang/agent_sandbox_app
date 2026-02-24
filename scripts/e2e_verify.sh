@@ -10,6 +10,21 @@ json() {
   jq -r "$1"
 }
 
+wait_for_ssh() {
+  local ip="$1"
+  local tries="${2:-60}"
+  local label="${3:-guest}"
+  for i in $(seq 1 "$tries"); do
+    if timeout 1 bash -c "cat < /dev/null > /dev/tcp/${ip}/22" 2>/dev/null; then
+      echo "[info] SSH ready on ${label} (${ip}) after ${i}s"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "[error] SSH not ready on ${label} (${ip}) after ${tries}s"
+  return 1
+}
+
 echo "[0/9] cleanup old resources"
 curl -sS -X POST "${RUNTIME_URL}/v1/sandboxes/stop" -H 'content-type: application/json' -d "{\"sandbox_id\":\"${SANDBOX_A}\"}" >/dev/null || true
 curl -sS -X POST "${RUNTIME_URL}/v1/sandboxes/stop" -H 'content-type: application/json' -d "{\"sandbox_id\":\"${SANDBOX_B}\"}" >/dev/null || true
@@ -22,9 +37,9 @@ curl -sS -X POST "${RUNTIME_URL}/v1/sandboxes" -H 'content-type: application/jso
 
 echo "[2/9] start A"
 curl -sS -X POST "${RUNTIME_URL}/v1/sandboxes/start" -H 'content-type: application/json' -d "{\"sandbox_id\":\"${SANDBOX_A}\",\"vcpu_count\":2,\"mem_mib\":1024}" | jq
-sleep 20
 
 A_IP=$(curl -sS "${RUNTIME_URL}/v1/sandboxes/status?sandbox_id=${SANDBOX_A}" | json '.result.network.guest_ip')
+wait_for_ssh "${A_IP}" 120 "A"
 
 echo "[3/9] write marker before in A (${A_IP})"
 ssh -o StrictHostKeyChecking=no root@"${A_IP}" 'echo before > /root/marker.txt && cat /root/marker.txt'
@@ -40,9 +55,9 @@ curl -sS -X POST "${RUNTIME_URL}/v1/restores" -H 'content-type: application/json
 
 echo "[7/9] start B"
 curl -sS -X POST "${RUNTIME_URL}/v1/sandboxes/start" -H 'content-type: application/json' -d "{\"sandbox_id\":\"${SANDBOX_B}\",\"vcpu_count\":2,\"mem_mib\":1024}" | jq
-sleep 25
 
 B_IP=$(curl -sS "${RUNTIME_URL}/v1/sandboxes/status?sandbox_id=${SANDBOX_B}" | json '.result.network.guest_ip')
+wait_for_ssh "${B_IP}" 120 "B"
 
 echo "[8/9] verify marker in B (${B_IP})"
 VALUE=$(ssh -o StrictHostKeyChecking=no root@"${B_IP}" 'cat /root/marker.txt')
