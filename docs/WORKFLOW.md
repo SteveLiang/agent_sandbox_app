@@ -48,13 +48,13 @@ Pass criteria:
 ## Phase 3: Base Image Creation
 1. Build one Ubuntu-based rootfs image.
 2. Install shared toolchain (`git`, `curl`, `zsh`, `python3`, `node`, etc.).
-3. Install both CLI tools:
-- `codex`
-- `claude`
-4. Add first-boot hook for per-sandbox config/env injection.
+3. Install `codex` CLI.
+4. Prepare guest SSH access with your host public key:
+- `ROOTFS_MOUNT=/mnt/img-base PUBKEY_PATH=/root/.ssh/id_rsa.pub bash scripts/prepare_guest_ssh.sh`
+5. Add first-boot hook for per-sandbox config/env injection.
 
 Validation:
-- New microVM can run `codex --help` and `claude --help`.
+- New microVM can run `codex --help`.
 
 ## Phase 4: Control Plane (macOS)
 1. Implement API endpoints:
@@ -67,11 +67,16 @@ Validation:
 
 ## Phase 5: End-to-End Test
 1. Create sandbox.
-2. Write known file in sandbox.
+2. Start sandbox and record `network.ssh_port` from status.
+3. SSH to sandbox and write known file in guest.
 3. Snapshot.
-4. Modify file.
-5. Restore snapshot to new sandbox.
-6. Verify restored sandbox has pre-modification state.
+4. Modify file in guest.
+5. Restore snapshot to new sandbox and start it.
+6. SSH to restored sandbox and verify pre-modification state.
+
+Example guest commands:
+- `echo before > /root/marker.txt`
+- `echo after > /root/marker.txt`
 
 ## Phase 6: MVP Hardening
 1. Add TTL reaper for stale sandboxes/snapshots.
@@ -80,5 +85,5 @@ Validation:
 
 ## Definition of Done
 - End-to-end snapshot/restore flow works consistently.
-- Both `codex` and `claude` are available in every sandbox.
+- `codex` is available in every sandbox.
 - Workflow is reproducible using this repository docs/scripts.

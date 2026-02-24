@@ -38,6 +38,9 @@ type startReq struct {
 	BridgeIF    string `json:"bridge_if"`
 	NetCIDR     string `json:"net_cidr"`
 	TapPrefix   string `json:"tap_prefix"`
+	SSHPortMin  int    `json:"ssh_port_min"`
+	SSHPortMax  int    `json:"ssh_port_max"`
+	SSHPort     int    `json:"ssh_port"`
 }
 
 func main() {
@@ -156,6 +159,12 @@ func (s *server) handleStartSandbox(w http.ResponseWriter, r *http.Request) {
 	if req.TapPrefix == "" {
 		req.TapPrefix = envOrDefault("DEFAULT_TAP_PREFIX", "fctap")
 	}
+	if req.SSHPortMin == 0 {
+		req.SSHPortMin = envIntOrDefault("DEFAULT_SSH_PORT_MIN", 2200)
+	}
+	if req.SSHPortMax == 0 {
+		req.SSHPortMax = envIntOrDefault("DEFAULT_SSH_PORT_MAX", 2999)
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
@@ -168,6 +177,9 @@ func (s *server) handleStartSandbox(w http.ResponseWriter, r *http.Request) {
 		BridgeIF:    req.BridgeIF,
 		NetCIDR:     req.NetCIDR,
 		TapPrefix:   req.TapPrefix,
+		SSHPortMin:  req.SSHPortMin,
+		SSHPortMax:  req.SSHPortMax,
+		SSHPort:     req.SSHPort,
 	})
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})

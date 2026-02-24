@@ -5,7 +5,7 @@ Minimal MVP for agent sandboxes with near-instant snapshot and restore semantics
 This project targets:
 - Runtime host: Linux (Ubuntu 24.04+) with KVM
 - Developer machine: macOS (control plane development)
-- Sandboxes: microVM-based, with both Codex and Claude tooling available in each environment
+- Sandboxes: microVM-based, with Codex tooling available in each environment
 
 ## MVP Goals
 - Create sandbox from a base image
@@ -20,6 +20,7 @@ This project targets:
 - `scripts/validate_kvm.sh`: host capability checks
 - `scripts/bootstrap_host.sh`: runtime host dependency bootstrap
 - `scripts/runtime_agent_smoketest.sh`: exercises create/snapshot/restore/delete
+- `scripts/prepare_guest_ssh.sh`: installs/keys SSH access in mounted guest rootfs
 - `cmd/runtime-agent`: minimal droplet-side runtime adapter
 
 ## Quick Start

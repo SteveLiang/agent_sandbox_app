@@ -25,7 +25,7 @@ THIN_POOL=microvm-vg/sandbox-thinpool RUNTIME_ADDR=:8081 ./bin/runtime-agent
 - `POST /v1/sandboxes` body: `{"sandbox_id":"...","size_gb":5}`
 - `DELETE /v1/sandboxes?sandbox_id=...`
 - `GET /v1/sandboxes/status?sandbox_id=...`
-- `POST /v1/sandboxes/start` body: `{"sandbox_id":"...","kernel_image":"/var/lib/microvm/images/vmlinux.bin","vcpu_count":2,"mem_mib":1024,"bridge_if":"fcbr0","net_cidr":"172.26.0.0/24","tap_prefix":"fctap"}`
+- `POST /v1/sandboxes/start` body: `{"sandbox_id":"...","kernel_image":"/var/lib/microvm/images/vmlinux.bin","vcpu_count":2,"mem_mib":1024,"bridge_if":"fcbr0","net_cidr":"172.26.0.0/24","tap_prefix":"fctap","ssh_port_min":2200,"ssh_port_max":2999}`
 - `POST /v1/sandboxes/stop` body: `{"sandbox_id":"..."}`
 - `POST /v1/snapshots` body: `{"sandbox_id":"...","snapshot_id":"..."}`
 - `DELETE /v1/snapshots?snapshot_id=...`
@@ -57,3 +57,23 @@ Options:
 - If `tap_dev` is omitted, runtime-agent allocates a per-sandbox TAP from `tap_prefix` and attaches it to `bridge_if`.
 - If `guest_mac` is omitted, runtime-agent generates a deterministic local MAC from sandbox ID.
 - If `net_cidr` is set, runtime-agent allocates and persists a unique guest IP in sandbox network metadata.
+- Runtime-agent sets static guest networking via kernel `ip=` boot args using allocated guest IP/gateway.
+- Runtime-agent allocates and persists per-sandbox `ssh_port`, then adds localhost DNAT rule to guest `:22`.
+
+## In-Guest Validation (SSH)
+
+1. Start sandbox and capture status:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8081/v1/sandboxes/start \
+  -H 'content-type: application/json' \
+  -d '{"sandbox_id":"demo1","vcpu_count":2,"mem_mib":1024}' | jq
+
+curl -sS "http://127.0.0.1:8081/v1/sandboxes/status?sandbox_id=demo1" | jq
+```
+
+2. SSH using reported `network.ssh_port`:
+
+```bash
+ssh -p <ssh_port> -o StrictHostKeyChecking=no root@127.0.0.1
+```

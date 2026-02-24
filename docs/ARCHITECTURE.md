@@ -4,7 +4,7 @@
 Deliver a local-development-friendly control plane and a Linux-hosted microVM runtime that supports fast filesystem snapshot and restore.
 
 ## Scope In
-- One default base image with both `codex` and `claude` CLI available
+- One default base image with `codex` CLI available
 - MicroVM create/delete
 - Filesystem snapshot create/list/delete
 - Restore snapshot to a new microVM
@@ -33,7 +33,7 @@ Deliver a local-development-friendly control plane and a Linux-hosted microVM ru
 4. Base Image/Template
 - Ubuntu rootfs
 - Shared developer tools
-- Both `codex` and `claude` preinstalled
+- `codex` preinstalled
 - First-boot hook to inject per-sandbox secrets/config
 
 ## Data Model (minimal)

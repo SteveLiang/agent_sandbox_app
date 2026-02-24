@@ -63,6 +63,7 @@ type NetworkConfig struct {
 	GuestIP  string `json:"guest_ip"`
 	Gateway  string `json:"gateway"`
 	GuestMAC string `json:"guest_mac"`
+	SSHPort  int    `json:"ssh_port"`
 }
 
 type StartVMOptions struct {
@@ -74,6 +75,9 @@ type StartVMOptions struct {
 	BridgeIF    string
 	NetCIDR     string
 	TapPrefix   string
+	SSHPortMin  int
+	SSHPortMax  int
+	SSHPort     int
 }
 
 func (a Adapter) CreateSandboxVolume(ctx context.Context, sandboxID string, sizeGB int) (CommandResult, error) {
@@ -149,6 +153,12 @@ func (a Adapter) StartSandboxVM(ctx context.Context, sandboxID string, opts Star
 	if opts.TapPrefix == "" {
 		opts.TapPrefix = "fctap"
 	}
+	if opts.SSHPortMin == 0 {
+		opts.SSHPortMin = 2200
+	}
+	if opts.SSHPortMax == 0 {
+		opts.SSHPortMax = 2999
+	}
 
 	rootFS := volumePath(a.ThinPool, "sbx-"+sandboxID)
 	if _, err := os.Stat(rootFS); err != nil {
@@ -177,6 +187,9 @@ func (a Adapter) StartSandboxVM(ctx context.Context, sandboxID string, opts Star
 	if err != nil {
 		return VMResult{}, err
 	}
+	if err := a.ensureSSHPortForward(ctx, networkCfg); err != nil {
+		return VMResult{}, err
+	}
 
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
@@ -196,6 +209,7 @@ func (a Adapter) StartSandboxVM(ctx context.Context, sandboxID string, opts Star
 			_ = cmd.Process.Kill()
 			_ = os.Remove(socketPath)
 			_ = os.Remove(pidPath)
+			_ = a.deleteSSHPortForward(context.Background(), networkCfg)
 			_ = a.deleteTapDevice(context.Background(), networkCfg.TapDev)
 		}
 	}()
@@ -218,13 +232,25 @@ func (a Adapter) StartSandboxVM(ctx context.Context, sandboxID string, opts Star
 	); err != nil {
 		return VMResult{}, err
 	}
+	mask, err := netmaskFromCIDR(networkCfg.NetCIDR)
+	if err != nil {
+		return VMResult{}, err
+	}
+	bootArgs := fmt.Sprintf(
+		"console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw ip=%s::%s:%s:%s:eth0:off",
+		networkCfg.GuestIP,
+		networkCfg.Gateway,
+		mask,
+		sandboxID,
+	)
+
 	if err := putFC(
 		waitCtx,
 		socketPath,
 		"/boot-source",
 		map[string]any{
 			"kernel_image_path": opts.KernelImage,
-			"boot_args":         "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw",
+			"boot_args":         bootArgs,
 		},
 	); err != nil {
 		return VMResult{}, err
@@ -280,6 +306,7 @@ func (a Adapter) StopSandboxVM(_ context.Context, sandboxID string) (CommandResu
 		if errors.Is(err, os.ErrNotExist) {
 			_ = os.Remove(filepath.Join(stateDir, "firecracker.sock"))
 			if cfg, readErr := readNetworkConfig(filepath.Join(stateDir, "network.json")); readErr == nil {
+				_ = a.deleteSSHPortForward(context.Background(), cfg)
 				_ = a.deleteTapDevice(context.Background(), cfg.TapDev)
 			}
 			return CommandResult{
@@ -303,6 +330,7 @@ func (a Adapter) StopSandboxVM(_ context.Context, sandboxID string) (CommandResu
 	_ = os.Remove(filepath.Join(stateDir, "firecracker.sock"))
 	_ = os.Remove(pidPath)
 	if cfg, err := readNetworkConfig(filepath.Join(stateDir, "network.json")); err == nil {
+		_ = a.deleteSSHPortForward(context.Background(), cfg)
 		_ = a.deleteTapDevice(context.Background(), cfg.TapDev)
 	}
 	return CommandResult{
@@ -353,7 +381,7 @@ func (a Adapter) SandboxStatus(_ context.Context, sandboxID string) (VMStatus, e
 }
 
 func (a Adapter) CheckDependencies(ctx context.Context) (map[string]bool, error) {
-	deps := []string{"lvcreate", "lvremove", "lvs", "firecracker"}
+	deps := []string{"lvcreate", "lvremove", "lvs", "firecracker", "iptables"}
 	out := make(map[string]bool, len(deps))
 	for _, dep := range deps {
 		cmd := exec.CommandContext(ctx, "sh", "-c", "command -v "+dep+" >/dev/null 2>&1")
@@ -469,6 +497,16 @@ func (a Adapter) ensureSandboxNetwork(
 		if err := a.ensureTapDevice(ctx, cfg.TapDev, cfg.BridgeIF); err != nil {
 			return NetworkConfig{}, err
 		}
+		if cfg.SSHPort == 0 {
+			port, allocErr := a.allocateSSHPort(opts.SSHPortMin, opts.SSHPortMax)
+			if allocErr != nil {
+				return NetworkConfig{}, allocErr
+			}
+			cfg.SSHPort = port
+			if writeErr := writeNetworkConfig(networkPath, cfg); writeErr != nil {
+				return NetworkConfig{}, writeErr
+			}
+		}
 		return cfg, nil
 	}
 
@@ -490,6 +528,14 @@ func (a Adapter) ensureSandboxNetwork(
 		GuestIP:  guestIP.String(),
 		Gateway:  gateway.String(),
 		GuestMAC: opts.GuestMAC,
+		SSHPort:  opts.SSHPort,
+	}
+	if cfg.SSHPort == 0 {
+		port, allocErr := a.allocateSSHPort(opts.SSHPortMin, opts.SSHPortMax)
+		if allocErr != nil {
+			return NetworkConfig{}, allocErr
+		}
+		cfg.SSHPort = port
 	}
 
 	if err := a.ensureTapDevice(ctx, cfg.TapDev, cfg.BridgeIF); err != nil {
@@ -587,6 +633,69 @@ func (a Adapter) deleteTapDevice(ctx context.Context, tapDev string) error {
 	return err
 }
 
+func (a Adapter) allocateSSHPort(minPort, maxPort int) (int, error) {
+	if minPort <= 0 || maxPort <= 0 || maxPort < minPort {
+		return 0, errors.New("invalid ssh port range")
+	}
+	used := map[int]bool{}
+	pattern := filepath.Join(a.VMRoot, "sandboxes", "*", "network.json")
+	paths, _ := filepath.Glob(pattern)
+	for _, p := range paths {
+		cfg, err := readNetworkConfig(p)
+		if err == nil && cfg.SSHPort > 0 {
+			used[cfg.SSHPort] = true
+		}
+	}
+	for p := minPort; p <= maxPort; p++ {
+		if used[p] {
+			continue
+		}
+		if tcpPortFree(p) {
+			return p, nil
+		}
+	}
+	return 0, fmt.Errorf("no free ssh port in range %d-%d", minPort, maxPort)
+}
+
+func (a Adapter) ensureSSHPortForward(ctx context.Context, cfg NetworkConfig) error {
+	if cfg.SSHPort <= 0 || cfg.GuestIP == "" {
+		return errors.New("ssh forward requires ssh_port and guest_ip")
+	}
+	port := strconv.Itoa(cfg.SSHPort)
+	toDest := cfg.GuestIP + ":22"
+	if _, err := runCommand(ctx, []string{
+		"iptables", "-t", "nat", "-C", "OUTPUT",
+		"-p", "tcp", "-d", "127.0.0.1", "--dport", port,
+		"-j", "DNAT", "--to-destination", toDest,
+	}); err != nil {
+		if _, addErr := runCommand(ctx, []string{
+			"iptables", "-t", "nat", "-A", "OUTPUT",
+			"-p", "tcp", "-d", "127.0.0.1", "--dport", port,
+			"-j", "DNAT", "--to-destination", toDest,
+		}); addErr != nil {
+			return addErr
+		}
+	}
+	return nil
+}
+
+func (a Adapter) deleteSSHPortForward(ctx context.Context, cfg NetworkConfig) error {
+	if cfg.SSHPort <= 0 || cfg.GuestIP == "" {
+		return nil
+	}
+	port := strconv.Itoa(cfg.SSHPort)
+	toDest := cfg.GuestIP + ":22"
+	_, err := runCommand(ctx, []string{
+		"iptables", "-t", "nat", "-D", "OUTPUT",
+		"-p", "tcp", "-d", "127.0.0.1", "--dport", port,
+		"-j", "DNAT", "--to-destination", toDest,
+	})
+	if err != nil {
+		return nil
+	}
+	return nil
+}
+
 func deterministicTapName(prefix, sandboxID string) string {
 	sum := sha1.Sum([]byte(sandboxID))
 	// Linux netdev max length is 15 chars.
@@ -648,4 +757,25 @@ func isBroadcastIP(ip net.IP, subnet *net.IPNet) bool {
 		bcast[i] = network[i] | ^subnet.Mask[i]
 	}
 	return ip4.Equal(bcast)
+}
+
+func netmaskFromCIDR(cidr string) (string, error) {
+	_, subnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return "", err
+	}
+	m := subnet.Mask
+	if len(m) != 4 {
+		return "", errors.New("only ipv4 cidr supported")
+	}
+	return fmt.Sprintf("%d.%d.%d.%d", m[0], m[1], m[2], m[3]), nil
+}
+
+func tcpPortFree(port int) bool {
+	ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
+	if err != nil {
+		return false
+	}
+	_ = ln.Close()
+	return true
 }
