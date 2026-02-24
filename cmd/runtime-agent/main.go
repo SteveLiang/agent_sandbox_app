@@ -35,6 +35,9 @@ type startReq struct {
 	MemMiB      int    `json:"mem_mib"`
 	TapDev      string `json:"tap_dev"`
 	GuestMAC    string `json:"guest_mac"`
+	BridgeIF    string `json:"bridge_if"`
+	NetCIDR     string `json:"net_cidr"`
+	TapPrefix   string `json:"tap_prefix"`
 }
 
 func main() {
@@ -144,18 +147,28 @@ func (s *server) handleStartSandbox(w http.ResponseWriter, r *http.Request) {
 	if req.TapDev == "" {
 		req.TapDev = envOrDefault("DEFAULT_TAP_DEV", "")
 	}
+	if req.BridgeIF == "" {
+		req.BridgeIF = envOrDefault("DEFAULT_BRIDGE_IF", "fcbr0")
+	}
+	if req.NetCIDR == "" {
+		req.NetCIDR = envOrDefault("DEFAULT_NET_CIDR", "172.26.0.0/24")
+	}
+	if req.TapPrefix == "" {
+		req.TapPrefix = envOrDefault("DEFAULT_TAP_PREFIX", "fctap")
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	res, err := s.adapter.StartSandboxVM(
-		ctx,
-		req.SandboxID,
-		req.KernelImage,
-		req.VCPUCount,
-		req.MemMiB,
-		req.TapDev,
-		req.GuestMAC,
-	)
+	res, err := s.adapter.StartSandboxVM(ctx, req.SandboxID, runtime.StartVMOptions{
+		KernelImage: req.KernelImage,
+		VCPUCount:   req.VCPUCount,
+		MemMiB:      req.MemMiB,
+		TapDev:      req.TapDev,
+		GuestMAC:    req.GuestMAC,
+		BridgeIF:    req.BridgeIF,
+		NetCIDR:     req.NetCIDR,
+		TapPrefix:   req.TapPrefix,
+	})
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return

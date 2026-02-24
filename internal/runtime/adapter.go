@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -33,24 +34,46 @@ type CommandResult struct {
 }
 
 type VMResult struct {
-	SandboxID  string `json:"sandbox_id"`
-	PID        int    `json:"pid"`
-	SocketPath string `json:"socket_path"`
-	RootFSPath string `json:"rootfs_path"`
-	StateDir   string `json:"state_dir"`
+	SandboxID  string        `json:"sandbox_id"`
+	PID        int           `json:"pid"`
+	SocketPath string        `json:"socket_path"`
+	RootFSPath string        `json:"rootfs_path"`
+	StateDir   string        `json:"state_dir"`
+	Network    NetworkConfig `json:"network"`
 }
 
 type VMStatus struct {
-	SandboxID      string `json:"sandbox_id"`
-	StateDir       string `json:"state_dir"`
-	PIDPath        string `json:"pid_path"`
-	SocketPath     string `json:"socket_path"`
-	LogPath        string `json:"log_path"`
-	RootFSPath     string `json:"rootfs_path"`
-	PID            int    `json:"pid"`
-	PIDFileExists  bool   `json:"pid_file_exists"`
-	SocketExists   bool   `json:"socket_exists"`
-	ProcessRunning bool   `json:"process_running"`
+	SandboxID      string        `json:"sandbox_id"`
+	StateDir       string        `json:"state_dir"`
+	PIDPath        string        `json:"pid_path"`
+	SocketPath     string        `json:"socket_path"`
+	LogPath        string        `json:"log_path"`
+	RootFSPath     string        `json:"rootfs_path"`
+	PID            int           `json:"pid"`
+	PIDFileExists  bool          `json:"pid_file_exists"`
+	SocketExists   bool          `json:"socket_exists"`
+	ProcessRunning bool          `json:"process_running"`
+	Network        NetworkConfig `json:"network"`
+}
+
+type NetworkConfig struct {
+	BridgeIF string `json:"bridge_if"`
+	TapDev   string `json:"tap_dev"`
+	NetCIDR  string `json:"net_cidr"`
+	GuestIP  string `json:"guest_ip"`
+	Gateway  string `json:"gateway"`
+	GuestMAC string `json:"guest_mac"`
+}
+
+type StartVMOptions struct {
+	KernelImage string
+	VCPUCount   int
+	MemMiB      int
+	TapDev      string
+	GuestMAC    string
+	BridgeIF    string
+	NetCIDR     string
+	TapPrefix   string
 }
 
 func (a Adapter) CreateSandboxVolume(ctx context.Context, sandboxID string, sizeGB int) (CommandResult, error) {
@@ -107,20 +130,24 @@ func (a Adapter) DeleteSnapshotVolume(ctx context.Context, snapshotID string) (C
 	return runCommand(ctx, cmd)
 }
 
-func (a Adapter) StartSandboxVM(
-	ctx context.Context,
-	sandboxID, kernelImage string,
-	vcpuCount, memMiB int,
-	hostTap, guestMAC string,
-) (VMResult, error) {
+func (a Adapter) StartSandboxVM(ctx context.Context, sandboxID string, opts StartVMOptions) (VMResult, error) {
 	if err := validateID(sandboxID); err != nil {
 		return VMResult{}, err
 	}
-	if kernelImage == "" {
+	if opts.KernelImage == "" {
 		return VMResult{}, errors.New("kernel_image is required")
 	}
-	if vcpuCount <= 0 || memMiB <= 0 {
+	if opts.VCPUCount <= 0 || opts.MemMiB <= 0 {
 		return VMResult{}, errors.New("vcpu_count and mem_mib must be > 0")
+	}
+	if opts.BridgeIF == "" {
+		opts.BridgeIF = "fcbr0"
+	}
+	if opts.NetCIDR == "" {
+		opts.NetCIDR = "172.26.0.0/24"
+	}
+	if opts.TapPrefix == "" {
+		opts.TapPrefix = "fctap"
 	}
 
 	rootFS := volumePath(a.ThinPool, "sbx-"+sandboxID)
@@ -143,7 +170,13 @@ func (a Adapter) StartSandboxVM(
 	socketPath := filepath.Join(stateDir, "firecracker.sock")
 	pidPath := filepath.Join(stateDir, "firecracker.pid")
 	logPath := filepath.Join(stateDir, "firecracker.log")
+	networkPath := filepath.Join(stateDir, "network.json")
 	_ = os.Remove(socketPath)
+
+	networkCfg, err := a.ensureSandboxNetwork(ctx, sandboxID, stateDir, opts, networkPath)
+	if err != nil {
+		return VMResult{}, err
+	}
 
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
@@ -163,6 +196,7 @@ func (a Adapter) StartSandboxVM(
 			_ = cmd.Process.Kill()
 			_ = os.Remove(socketPath)
 			_ = os.Remove(pidPath)
+			_ = a.deleteTapDevice(context.Background(), networkCfg.TapDev)
 		}
 	}()
 
@@ -180,7 +214,7 @@ func (a Adapter) StartSandboxVM(
 		waitCtx,
 		socketPath,
 		"/machine-config",
-		map[string]any{"vcpu_count": vcpuCount, "mem_size_mib": memMiB, "smt": false},
+		map[string]any{"vcpu_count": opts.VCPUCount, "mem_size_mib": opts.MemMiB, "smt": false},
 	); err != nil {
 		return VMResult{}, err
 	}
@@ -189,7 +223,7 @@ func (a Adapter) StartSandboxVM(
 		socketPath,
 		"/boot-source",
 		map[string]any{
-			"kernel_image_path": kernelImage,
+			"kernel_image_path": opts.KernelImage,
 			"boot_args":         "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw",
 		},
 	); err != nil {
@@ -208,22 +242,17 @@ func (a Adapter) StartSandboxVM(
 	); err != nil {
 		return VMResult{}, err
 	}
-	if hostTap != "" {
-		if guestMAC == "" {
-			guestMAC = deterministicGuestMAC(sandboxID)
-		}
-		if err := putFC(
-			waitCtx,
-			socketPath,
-			"/network-interfaces/eth0",
-			map[string]any{
-				"iface_id":      "eth0",
-				"host_dev_name": hostTap,
-				"guest_mac":     guestMAC,
-			},
-		); err != nil {
-			return VMResult{}, err
-		}
+	if err := putFC(
+		waitCtx,
+		socketPath,
+		"/network-interfaces/eth0",
+		map[string]any{
+			"iface_id":      "eth0",
+			"host_dev_name": networkCfg.TapDev,
+			"guest_mac":     networkCfg.GuestMAC,
+		},
+	); err != nil {
+		return VMResult{}, err
 	}
 	if err := putFC(waitCtx, socketPath, "/actions", map[string]any{"action_type": "InstanceStart"}); err != nil {
 		return VMResult{}, err
@@ -236,6 +265,7 @@ func (a Adapter) StartSandboxVM(
 		SocketPath: socketPath,
 		RootFSPath: rootFS,
 		StateDir:   stateDir,
+		Network:    networkCfg,
 	}, nil
 }
 
@@ -249,6 +279,9 @@ func (a Adapter) StopSandboxVM(_ context.Context, sandboxID string) (CommandResu
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			_ = os.Remove(filepath.Join(stateDir, "firecracker.sock"))
+			if cfg, readErr := readNetworkConfig(filepath.Join(stateDir, "network.json")); readErr == nil {
+				_ = a.deleteTapDevice(context.Background(), cfg.TapDev)
+			}
 			return CommandResult{
 				Command: "noop",
 				Output:  "sandbox " + sandboxID + " already stopped (pid file not found)",
@@ -269,6 +302,9 @@ func (a Adapter) StopSandboxVM(_ context.Context, sandboxID string) (CommandResu
 	}
 	_ = os.Remove(filepath.Join(stateDir, "firecracker.sock"))
 	_ = os.Remove(pidPath)
+	if cfg, err := readNetworkConfig(filepath.Join(stateDir, "network.json")); err == nil {
+		_ = a.deleteTapDevice(context.Background(), cfg.TapDev)
+	}
 	return CommandResult{
 		Command: "kill -TERM " + strconv.Itoa(pid),
 		Output:  "stopped sandbox " + sandboxID,
@@ -292,6 +328,9 @@ func (a Adapter) SandboxStatus(_ context.Context, sandboxID string) (VMStatus, e
 		SocketPath: socketPath,
 		LogPath:    logPath,
 		RootFSPath: rootFS,
+	}
+	if cfg, err := readNetworkConfig(filepath.Join(stateDir, "network.json")); err == nil {
+		status.Network = cfg
 	}
 
 	if _, err := os.Stat(pidPath); err == nil {
@@ -418,4 +457,195 @@ func deterministicGuestMAC(sandboxID string) string {
 	sum := sha1.Sum([]byte(sandboxID))
 	// Locally administered unicast MAC: 02:xx:xx:xx:xx:xx
 	return fmt.Sprintf("02:%02x:%02x:%02x:%02x:%02x", sum[0], sum[1], sum[2], sum[3], sum[4])
+}
+
+func (a Adapter) ensureSandboxNetwork(
+	ctx context.Context,
+	sandboxID, stateDir string,
+	opts StartVMOptions,
+	networkPath string,
+) (NetworkConfig, error) {
+	if cfg, err := readNetworkConfig(networkPath); err == nil && cfg.TapDev != "" {
+		if err := a.ensureTapDevice(ctx, cfg.TapDev, cfg.BridgeIF); err != nil {
+			return NetworkConfig{}, err
+		}
+		return cfg, nil
+	}
+
+	if opts.GuestMAC == "" {
+		opts.GuestMAC = deterministicGuestMAC(sandboxID)
+	}
+	if opts.TapDev == "" {
+		opts.TapDev = deterministicTapName(opts.TapPrefix, sandboxID)
+	}
+
+	guestIP, gateway, err := a.allocateGuestIP(opts.NetCIDR, opts.BridgeIF)
+	if err != nil {
+		return NetworkConfig{}, err
+	}
+	cfg := NetworkConfig{
+		BridgeIF: opts.BridgeIF,
+		TapDev:   opts.TapDev,
+		NetCIDR:  opts.NetCIDR,
+		GuestIP:  guestIP.String(),
+		Gateway:  gateway.String(),
+		GuestMAC: opts.GuestMAC,
+	}
+
+	if err := a.ensureTapDevice(ctx, cfg.TapDev, cfg.BridgeIF); err != nil {
+		return NetworkConfig{}, err
+	}
+	if err := writeNetworkConfig(networkPath, cfg); err != nil {
+		return NetworkConfig{}, err
+	}
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		return NetworkConfig{}, err
+	}
+	return cfg, nil
+}
+
+func (a Adapter) allocateGuestIP(netCIDR, bridgeIF string) (net.IP, net.IP, error) {
+	_, subnet, err := net.ParseCIDR(netCIDR)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid net cidr %q: %w", netCIDR, err)
+	}
+	gatewayIP, err := bridgeGatewayIP(bridgeIF, subnet)
+	if err != nil {
+		return nil, nil, err
+	}
+	used := map[string]bool{gatewayIP.String(): true}
+
+	pattern := filepath.Join(a.VMRoot, "sandboxes", "*", "network.json")
+	paths, _ := filepath.Glob(pattern)
+	for _, p := range paths {
+		cfg, readErr := readNetworkConfig(p)
+		if readErr == nil && cfg.NetCIDR == netCIDR && cfg.GuestIP != "" {
+			used[cfg.GuestIP] = true
+		}
+	}
+
+	for ip := firstHostIP(subnet); subnet.Contains(ip); ip = nextIP(ip) {
+		if ip.Equal(gatewayIP) {
+			continue
+		}
+		if isBroadcastIP(ip, subnet) {
+			continue
+		}
+		if !used[ip.String()] {
+			return ip, gatewayIP, nil
+		}
+	}
+	return nil, nil, errors.New("no free guest ip available in subnet")
+}
+
+func bridgeGatewayIP(bridgeIF string, subnet *net.IPNet) (net.IP, error) {
+	iface, err := net.InterfaceByName(bridgeIF)
+	if err != nil {
+		return nil, fmt.Errorf("bridge interface %q not found: %w", bridgeIF, err)
+	}
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return nil, err
+	}
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok {
+			ip4 := ipnet.IP.To4()
+			if ip4 != nil && subnet.Contains(ip4) {
+				return ip4, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("no bridge ipv4 found on %s within %s", bridgeIF, subnet.String())
+}
+
+func (a Adapter) ensureTapDevice(ctx context.Context, tapDev, bridgeIF string) error {
+	if tapDev == "" {
+		return errors.New("tap device is empty")
+	}
+	if bridgeIF == "" {
+		return errors.New("bridge interface is empty")
+	}
+	if _, err := runCommand(ctx, []string{"ip", "link", "show", "dev", tapDev}); err != nil {
+		if _, addErr := runCommand(ctx, []string{"ip", "tuntap", "add", "dev", tapDev, "mode", "tap"}); addErr != nil {
+			return addErr
+		}
+	}
+	if _, err := runCommand(ctx, []string{"ip", "link", "set", tapDev, "master", bridgeIF}); err != nil {
+		return err
+	}
+	if _, err := runCommand(ctx, []string{"ip", "link", "set", tapDev, "up"}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (a Adapter) deleteTapDevice(ctx context.Context, tapDev string) error {
+	if tapDev == "" {
+		return nil
+	}
+	_, err := runCommand(ctx, []string{"ip", "link", "del", tapDev})
+	return err
+}
+
+func deterministicTapName(prefix, sandboxID string) string {
+	sum := sha1.Sum([]byte(sandboxID))
+	// Linux netdev max length is 15 chars.
+	name := fmt.Sprintf("%s%x%x%x%x", prefix, sum[0], sum[1], sum[2], sum[3])
+	if len(name) > 15 {
+		return name[:15]
+	}
+	return name
+}
+
+func writeNetworkConfig(path string, cfg NetworkConfig) error {
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
+func readNetworkConfig(path string) (NetworkConfig, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return NetworkConfig{}, err
+	}
+	var cfg NetworkConfig
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return NetworkConfig{}, err
+	}
+	return cfg, nil
+}
+
+func firstHostIP(subnet *net.IPNet) net.IP {
+	return nextIP(subnet.IP.Mask(subnet.Mask))
+}
+
+func nextIP(ip net.IP) net.IP {
+	v := ip.To4()
+	if v == nil {
+		return nil
+	}
+	i := big.NewInt(0).SetBytes(v)
+	i = i.Add(i, big.NewInt(1))
+	next := i.Bytes()
+	out := make([]byte, 4)
+	copy(out[4-len(next):], next)
+	return net.IP(out)
+}
+
+func isBroadcastIP(ip net.IP, subnet *net.IPNet) bool {
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return false
+	}
+	network := subnet.IP.Mask(subnet.Mask).To4()
+	if network == nil {
+		return false
+	}
+	bcast := make(net.IP, 4)
+	for i := 0; i < 4; i++ {
+		bcast[i] = network[i] | ^subnet.Mask[i]
+	}
+	return ip4.Equal(bcast)
 }
