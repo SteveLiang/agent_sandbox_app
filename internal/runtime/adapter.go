@@ -136,12 +136,20 @@ func (a Adapter) StartSandboxVM(
 	}
 	defer logFile.Close()
 
-	cmd := exec.CommandContext(ctx, "firecracker", "--api-sock", socketPath)
+	cmd := exec.Command("firecracker", "--api-sock", socketPath)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
 		return VMResult{}, fmt.Errorf("start firecracker: %w", err)
 	}
+	cleanupNeeded := true
+	defer func() {
+		if cleanupNeeded {
+			_ = cmd.Process.Kill()
+			_ = os.Remove(socketPath)
+			_ = os.Remove(pidPath)
+		}
+	}()
 
 	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)), 0o644); err != nil {
 		return VMResult{}, fmt.Errorf("write pid file: %w", err)
@@ -188,6 +196,7 @@ func (a Adapter) StartSandboxVM(
 	if err := putFC(waitCtx, socketPath, "/actions", map[string]any{"action_type": "InstanceStart"}); err != nil {
 		return VMResult{}, err
 	}
+	cleanupNeeded = false
 
 	return VMResult{
 		SandboxID:  sandboxID,
@@ -206,6 +215,13 @@ func (a Adapter) StopSandboxVM(_ context.Context, sandboxID string) (CommandResu
 	pidPath := filepath.Join(stateDir, "firecracker.pid")
 	raw, err := os.ReadFile(pidPath)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			_ = os.Remove(filepath.Join(stateDir, "firecracker.sock"))
+			return CommandResult{
+				Command: "noop",
+				Output:  "sandbox " + sandboxID + " already stopped (pid file not found)",
+			}, nil
+		}
 		return CommandResult{}, fmt.Errorf("read pid file: %w", err)
 	}
 	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
