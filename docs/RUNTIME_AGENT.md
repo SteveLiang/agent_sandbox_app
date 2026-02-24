@@ -25,7 +25,7 @@ THIN_POOL=microvm-vg/sandbox-thinpool RUNTIME_ADDR=:8081 ./bin/runtime-agent
 - `POST /v1/sandboxes` body: `{"sandbox_id":"...","size_gb":5}`
 - `DELETE /v1/sandboxes?sandbox_id=...`
 - `GET /v1/sandboxes/status?sandbox_id=...`
-- `POST /v1/sandboxes/start` body: `{"sandbox_id":"...","kernel_image":"/var/lib/microvm/images/vmlinux.bin","vcpu_count":2,"mem_mib":1024}`
+- `POST /v1/sandboxes/start` body: `{"sandbox_id":"...","kernel_image":"/var/lib/microvm/images/vmlinux.bin","vcpu_count":2,"mem_mib":1024,"tap_dev":"fctap0","guest_mac":"02:aa:bb:cc:dd:ee"}`
 - `POST /v1/sandboxes/stop` body: `{"sandbox_id":"..."}`
 - `POST /v1/snapshots` body: `{"sandbox_id":"...","snapshot_id":"..."}`
 - `DELETE /v1/snapshots?snapshot_id=...`
@@ -54,3 +54,5 @@ Options:
 - This currently manages LVM thin volumes/snapshots.
 - VM start clears LVM `activationskip` and force-activates the LV before drive attach.
 - Firecracker process state lives under `/var/lib/microvm/sandboxes/<sandbox_id>/`.
+- If `tap_dev` is set, runtime-agent attaches Firecracker `eth0` using that TAP device.
+- If `guest_mac` is omitted, runtime-agent generates a deterministic local MAC from sandbox ID.

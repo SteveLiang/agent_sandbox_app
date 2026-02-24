@@ -3,6 +3,7 @@ package runtime
 import (
 	"bytes"
 	"context"
+	"crypto/sha1"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -110,6 +111,7 @@ func (a Adapter) StartSandboxVM(
 	ctx context.Context,
 	sandboxID, kernelImage string,
 	vcpuCount, memMiB int,
+	hostTap, guestMAC string,
 ) (VMResult, error) {
 	if err := validateID(sandboxID); err != nil {
 		return VMResult{}, err
@@ -205,6 +207,23 @@ func (a Adapter) StartSandboxVM(
 		},
 	); err != nil {
 		return VMResult{}, err
+	}
+	if hostTap != "" {
+		if guestMAC == "" {
+			guestMAC = deterministicGuestMAC(sandboxID)
+		}
+		if err := putFC(
+			waitCtx,
+			socketPath,
+			"/network-interfaces/eth0",
+			map[string]any{
+				"iface_id":      "eth0",
+				"host_dev_name": hostTap,
+				"guest_mac":     guestMAC,
+			},
+		); err != nil {
+			return VMResult{}, err
+		}
 	}
 	if err := putFC(waitCtx, socketPath, "/actions", map[string]any{"action_type": "InstanceStart"}); err != nil {
 		return VMResult{}, err
@@ -393,4 +412,10 @@ func processRunning(pid int) bool {
 	}
 	err := syscall.Kill(pid, 0)
 	return err == nil
+}
+
+func deterministicGuestMAC(sandboxID string) string {
+	sum := sha1.Sum([]byte(sandboxID))
+	// Locally administered unicast MAC: 02:xx:xx:xx:xx:xx
+	return fmt.Sprintf("02:%02x:%02x:%02x:%02x:%02x", sum[0], sum[1], sum[2], sum[3], sum[4])
 }
