@@ -31,6 +31,10 @@ curl -sS -X POST "${RUNTIME_URL}/v1/sandboxes/stop" -H 'content-type: applicatio
 curl -sS -X DELETE "${RUNTIME_URL}/v1/sandboxes?sandbox_id=${SANDBOX_A}" >/dev/null || true
 curl -sS -X DELETE "${RUNTIME_URL}/v1/sandboxes?sandbox_id=${SANDBOX_B}" >/dev/null || true
 curl -sS -X DELETE "${RUNTIME_URL}/v1/snapshots?snapshot_id=${SNAPSHOT_ID}" >/dev/null || true
+# Hard cleanup in case API delete silently failed in previous runs.
+lvremove -y "/dev/microvm-vg/sbx-${SANDBOX_A}" >/dev/null 2>&1 || true
+lvremove -y "/dev/microvm-vg/sbx-${SANDBOX_B}" >/dev/null 2>&1 || true
+lvremove -y "/dev/microvm-vg/snap-${SNAPSHOT_ID}" >/dev/null 2>&1 || true
 
 echo "[1/9] create A"
 curl -sS -X POST "${RUNTIME_URL}/v1/sandboxes" -H 'content-type: application/json' -d "{\"sandbox_id\":\"${SANDBOX_A}\",\"size_gb\":8}" | jq
@@ -42,7 +46,7 @@ A_IP=$(curl -sS "${RUNTIME_URL}/v1/sandboxes/status?sandbox_id=${SANDBOX_A}" | j
 wait_for_ssh "${A_IP}" 120 "A"
 
 echo "[3/9] write marker before in A (${A_IP})"
-ssh -o StrictHostKeyChecking=no root@"${A_IP}" 'echo before > /root/marker.txt && cat /root/marker.txt'
+ssh -o StrictHostKeyChecking=no root@"${A_IP}" 'echo before > /root/marker.txt && sync && cat /root/marker.txt'
 
 echo "[4/9] snapshot A"
 curl -sS -X POST "${RUNTIME_URL}/v1/snapshots" -H 'content-type: application/json' -d "{\"sandbox_id\":\"${SANDBOX_A}\",\"snapshot_id\":\"${SNAPSHOT_ID}\"}" | jq
