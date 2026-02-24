@@ -9,7 +9,8 @@ fi
 BRIDGE_IF="${BRIDGE_IF:-fcbr0}"
 BRIDGE_CIDR="${BRIDGE_CIDR:-172.26.0.1/24}"
 TAP_IF="${TAP_IF:-fctap0}"
-WAN_IF="${WAN_IF:-$(ip route get 1.1.1.1 | awk '{print $5; exit}') }"
+WAN_IF="${WAN_IF:-$(ip route get 1.1.1.1 | awk '{print $5; exit}')}"
+WAN_IF="$(echo "${WAN_IF}" | xargs)"
 
 if [[ -z "${WAN_IF}" ]]; then
   echo "Unable to determine WAN_IF. Set WAN_IF explicitly."
@@ -46,4 +47,5 @@ iptables -C FORWARD -i "${WAN_IF}" -o "${BRIDGE_IF}" -m state --state RELATED,ES
 echo "Networking configured."
 echo "Bridge: ${BRIDGE_IF}"
 echo "Tap: ${TAP_IF}"
-ip -br addr show "${BRIDGE_IF}" "${TAP_IF}"
+ip -br addr show dev "${BRIDGE_IF}"
+ip -br addr show dev "${TAP_IF}"
