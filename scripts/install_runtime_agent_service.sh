@@ -18,8 +18,8 @@ fi
 cat >"${SERVICE_PATH}" <<UNIT
 [Unit]
 Description=MicroVM Runtime Agent
-After=network-online.target microvm-networking.service
-Wants=network-online.target microvm-networking.service
+After=network-online.target microvm-networking.service microvm-storage.service
+Wants=network-online.target microvm-networking.service microvm-storage.service
 
 [Service]
 Type=simple

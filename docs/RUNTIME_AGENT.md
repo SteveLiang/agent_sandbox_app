@@ -70,7 +70,14 @@ bash scripts/install_runtime_agent_service.sh
 
 This installs and enables:
 - `microvm-networking.service`
+- `microvm-storage.service`
 - `runtime-agent.service`
+
+## End-to-End Verification
+
+```bash
+bash scripts/e2e_verify.sh
+```
 
 ## In-Guest Validation (SSH)
 

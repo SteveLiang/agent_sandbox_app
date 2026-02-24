@@ -21,6 +21,8 @@ This project targets:
 - `scripts/bootstrap_host.sh`: runtime host dependency bootstrap
 - `scripts/runtime_agent_smoketest.sh`: exercises create/snapshot/restore/delete
 - `scripts/prepare_guest_ssh.sh`: installs/keys SSH access in mounted guest rootfs
+- `scripts/install_storage_service.sh`: persists thinpool loop device + VG activation on boot
+- `scripts/e2e_verify.sh`: full SSH-based snapshot/restore verification
 - `cmd/runtime-agent`: minimal droplet-side runtime adapter
 
 ## Quick Start

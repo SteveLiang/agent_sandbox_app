@@ -46,6 +46,7 @@ Pass criteria:
 - `bash scripts/setup_networking.sh`
 8. Install services for reboot persistence:
 - `bash scripts/install_networking_service.sh`
+- `bash scripts/install_storage_service.sh`
 - `bash scripts/install_runtime_agent_service.sh`
 
 ## Phase 3: Base Image Creation
@@ -80,6 +81,9 @@ Validation:
 Example guest commands:
 - `echo before > /root/marker.txt`
 - `echo after > /root/marker.txt`
+
+Automated validation:
+- `bash scripts/e2e_verify.sh`
 
 ## Phase 6: MVP Hardening
 1. Add TTL reaper for stale sandboxes/snapshots.

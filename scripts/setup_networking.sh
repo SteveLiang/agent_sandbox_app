@@ -34,6 +34,8 @@ ip link set "${TAP_IF}" master "${BRIDGE_IF}"
 ip link set "${TAP_IF}" up
 
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
+sysctl -w net.ipv4.conf.all.route_localnet=1 >/dev/null
+sysctl -w net.ipv4.conf.default.route_localnet=1 >/dev/null
 
 iptables -t nat -C POSTROUTING -s "${BRIDGE_CIDR%/*}" -o "${WAN_IF}" -j MASQUERADE 2>/dev/null || \
   iptables -t nat -A POSTROUTING -s "${BRIDGE_CIDR%/*}" -o "${WAN_IF}" -j MASQUERADE
